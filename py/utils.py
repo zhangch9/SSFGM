@@ -284,8 +284,21 @@ def nontuple_preprocess_features(features):
 
 
 def nontuple_colnorm_features(features):
-    colabs = np.amax(np.fabs(features), axis=0)
-    features = features / colabs
+    features = features.astype(np.float32)
+    if sp.issparse(features):
+        x_csc = features.tocsc()
+        n_col = x_csc.shape[1]
+        colabs = np.zeros(n_col, dtype=np.float32)
+        for col in range(n_col):
+            start, end = x_csc.indptr[col:col+2]
+            max_norm = np.amax(np.fabs(x_csc.data[start:end]))
+            if max_norm == 0.:
+                continue
+            x_csc.data[start:end] /= max_norm
+        features = x_csc.tocsr()
+    else:
+        colabs = np.amax(np.fabs(features), axis=0)
+        features = features / colabs
     return features    
 
 

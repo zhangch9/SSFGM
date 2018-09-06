@@ -5,3 +5,6 @@
 */*.model
 */log*
 */*.out
+temp/
+*.pkl
+*.json

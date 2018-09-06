@@ -24,6 +24,7 @@ flags.DEFINE_string('dataset', 'reddit', 'Dataset string.')  # 'cora', 'citeseer
 flags.DEFINE_string('model', 'crf', 'Model string.')  # 'gcn', 'crf', 'gcn_crf'
 flags.DEFINE_float('learning_rate', 0.01, 'Initial learning rate.')
 flags.DEFINE_integer('epochs', 500, 'Number of epochs to train.')
+flags.DEFINE_integer('batchsize', 512, 'Number of epochs to train.')
 flags.DEFINE_bool('deep', False, 'Whether use deep factor')
 flags.DEFINE_integer('hidden1', 128, 'Number of units in hidden layer 1.')
 flags.DEFINE_integer('hidden2', 64, 'Number of units in hidden layer 2.')
@@ -129,6 +130,8 @@ def transferLabel2Onehot(labels, N):
 def construct_feeddict_forMixlayers(features, support, labels, placeholders):
     feed_dict = dict()
     feed_dict.update({placeholders['labels']: labels})
+    if sp.issparse(features):
+        features = features.todense()
     feed_dict.update({placeholders['features']: features})
     feed_dict.update({placeholders['support']: support})
     feed_dict.update({placeholders['num_features_nonzero']: features[0].shape})
@@ -150,7 +153,8 @@ def main(rank1):
         adj, features, y_train, y_val, y_test, train_index, val_index, test_index = loadRedditFromNPZ("data/")
         adj = adj+adj.T
         NUM_CLASS = np.max(y_train) + 1
-    if FLAGS.dataset in ['twitter_usa', 'twitter_world', 'fb', 'weibo']:
+    if FLAGS.dataset in ['twitter_usa', 'twitter_world', 'fb', 'weibo',
+                         'geotext', 'utgeo2011', 'world']:
         adj, features, y_train, y_val, y_test, train_index, val_index, test_index, label_names = load_location_data(FLAGS.dataset)
         NUM_CLASS = np.max(y_train) + 1
         if TRAIN_RATIO != 0:
@@ -164,11 +168,13 @@ def main(rank1):
         y_train, y_val, y_test = np.where(y_train)[1], np.where(y_val)[1], np.where(y_test)[1]
 
 
+    features = features.astype(np.float32)
     numNode = adj.shape[0]
     numNode_train = train_index.size
     numNode_val = val_index.size
     numNode_test = test_index.size
-    print(NUM_CLASS)
+    NUM_FEAT = features.shape[1]
+    print(NUM_CLASS, NUM_FEAT)
     print(numNode, numNode_train, numNode_val, numNode_test)
 
     label = np.zeros(numNode, dtype=int)
@@ -193,10 +199,13 @@ def main(rank1):
     # eyeADJ = sp.eye(numNode).tocsr()
 
     # Some preprocessing
-    if FLAGS.dataset not in ['twitter_usa', 'twitter_world', 'fb', 'weibo']:
-        features = nontuple_preprocess_features(features).todense()
-    else:
+    if FLAGS.dataset in ['twitter_usa', 'twitter_world', 'fb', 'weibo']:
         features = nontuple_colnorm_features(features)
+    elif FLAGS.dataset in ['geotext', 'world']:
+        pass
+        # features = nontuple_colnorm_features(features)
+    else:
+        features = nontuple_preprocess_features(features)
 
     CRF = (FLAGS.model == 'crf')
 
@@ -207,7 +216,7 @@ def main(rank1):
     # Define placeholders
     placeholders = {
         'support': tf.sparse_placeholder(tf.float32),
-        'features': tf.placeholder(tf.float32, shape=(None, features.shape[1])),
+        'features': tf.placeholder(tf.float32, shape=(None, NUM_FEAT)),
         'labels': tf.placeholder(tf.float32, shape=(None, NUM_CLASS)),
         'dropout': tf.placeholder_with_default(0., shape=()),
         'num_features_nonzero': tf.placeholder(tf.int32),  # helper variable for sparse dropout
@@ -245,7 +254,7 @@ def main(rank1):
             index = unlabeled_index
         MAX_ITER = 2 if CRF else 1
         for i in range(MAX_ITER):
-            for batch in iterate_minibatches_listinputs([index], batchsize=512, shuffle=True):
+            for batch in iterate_minibatches_listinputs([index], batchsize=FLAGS.batchsize, shuffle=True):
                 [excerpt], __ = batch
                 ADJ_batch = ADJ[excerpt]
                 support = sparse_to_tuple(ADJ_batch)
@@ -304,7 +313,7 @@ def main(rank1):
             index = np.concatenate([labeled_index, np.random.choice(unlabeled_index, numNode_train)])
         else:
             index = np.arange(numNode)
-        for batch in iterate_minibatches_listinputs([index], batchsize=512, shuffle=True):
+        for batch in iterate_minibatches_listinputs([index], batchsize=FLAGS.batchsize, shuffle=True):
             [excerpt], __ = batch
 
             normADJ_batch = normADJ[excerpt]
